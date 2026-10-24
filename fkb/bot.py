@@ -64,7 +64,12 @@ class KillBot(discord.Client):
         if gid:
             g = discord.Object(id=int(gid))
             self.tree.copy_global_to(guild=g)
-            await self.tree.sync(guild=g)
+            try:
+                await self.tree.sync(guild=g)
+            except discord.Forbidden:
+                log.warning("no access to GUILD_ID %s for command sync; falling back to global sync", gid)
+                self.tree.clear_commands(guild=g)
+                await self.tree.sync()
         else:
             await self.tree.sync()
         self.ingest_loop.change_interval(seconds=self.poll_s)
@@ -77,6 +82,7 @@ class KillBot(discord.Client):
 
     async def on_ready(self):
         log.info("logged in as %s", self.user)
+        log.info("in guilds: %s", ", ".join(f"{g.name} ({g.id})" for g in self.guilds) or "NONE")
 
     async def send(self, embed):
         ch = self.get_channel(self.channel_id) if self.channel_id else None
