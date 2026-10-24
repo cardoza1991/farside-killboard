@@ -1,0 +1,12 @@
+[Unit]
+Description=Farside killboard -> Discord webhook
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/abc/Desktop/farside-killboard
+ExecStart=/usr/bin/python3 /home/abc/Desktop/farside-killboard/killboard.py
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
