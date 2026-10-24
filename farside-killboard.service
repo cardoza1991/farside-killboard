@@ -1,10 +1,10 @@
 [Unit]
-Description=Farside killboard -> Discord webhook
+Description=Farside killboard Discord bot
 After=network-online.target
 
 [Service]
 WorkingDirectory=/home/abc/Desktop/farside-killboard
-ExecStart=/usr/bin/python3 /home/abc/Desktop/farside-killboard/killboard.py
+ExecStart=/home/abc/Desktop/the-elon-experience/.venv/bin/python /home/abc/Desktop/farside-killboard/killboard.py run
 Restart=on-failure
 RestartSec=30
 
