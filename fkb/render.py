@@ -106,3 +106,51 @@ def server_embed(s, period):
         {"name": "Active pilots / corps", "value": f"{s['pilots']} / {s['corps']}", "inline": True},
         {"name": "Hottest systems", "value": _top(s["top_systems"]), "inline": True},
         {"name": "Most lost ships", "value": _top(s["top_lost_ships"]), "inline": True}]}
+
+
+SEC_ICON = {"core": "🟢", "marches": "🟠", "deep": "🔴"}
+FRESH = "Data is only as fresh as playfarside.com's API (polled every 45 s)."
+
+
+def ago(ms, now_ms=None):
+    s = max(0, ((now_ms or time.time() * 1000) - (ms or 0)) / 1000)
+    for div, u in ((86400, "d"), (3600, "h"), (60, "m")):
+        if s >= div:
+            return f"{int(s // div)}{u} ago"
+    return f"{int(s)}s ago"
+
+
+def _sys(r):
+    return f"{SEC_ICON.get((r.get('security') or '').lower(), '⚪')} **{r['system']}**" + (f" · {r['region']}" if r.get("region") else "")
+
+
+def hunt_embed(rows, period, corp=None, now_ms=None):
+    lines = []
+    for i, r in enumerate(rows, 1):
+        ships = ", ".join(f"{n}×{c}" for n, c in r["victim_ships"]) or "—"
+        hunters = ", ".join(f"{n}×{c}" for n, c in r["hunters"]) or "—"
+        lines.append(f"`{i}` {_sys(r)}\n   {r['kills']} kills · last {ago(r['last'], now_ms)} · avg {cr(r['avg_value'])} cr\n"
+                     f"   victims: {ships}\n   hunting here: {hunters}")
+    return {"title": f"🎯 Hot systems · {period}" + (f" · {corp}" if corp else ""), "color": 0xE67E22,
+            "description": ("\n".join(lines) or "No kills in this period.")[:4000],
+            "footer": {"text": "Sorted by heat (kill count weighted to recent) · 🟢 core 🟠 marches 🔴 deep · " + FRESH}}
+
+
+def targets_embed(rows, period, home, now_ms=None):
+    lines = [f"{_sys(r)}\n   {r['losses']} non-{home} losses · last {ago(r['last'], now_ms)} · avg {cr(r['avg_value'])} cr · "
+             f"{', '.join(r['who'])}" for r in rows]
+    return {"title": f"🗡️ Targets · where non-{home} pilots died · {period}", "color": 0xC0392B,
+            "description": ("\n".join(lines) or "No non-DXD losses in this period.")[:4000], "footer": {"text": FRESH}}
+
+
+def where_embed(w, now_ms=None):
+    lines = []
+    for e in w["events"]:
+        icon = "🟩 kill" if e["role"] == "kill" else "🟥 loss"
+        lines.append(f"{icon} {SEC_ICON.get((e['security'] or '').lower(), '⚪')} **{e['sysname'] or '?'}**"
+                     f"{' · ' + e['poi_name'] if e.get('poi_name') else ''} · {ago(e['occurred_at'], now_ms)} · "
+                     f"{cr(e['total_value'])} cr · [`{e['id'][:8]}`]({feed.BASE}/kills/{e['id']})")
+    last = f"Last seen **{ago(w['last_seen'], now_ms)}** in **{w['events'][0]['sysname']}**" if w["events"] else "Never seen"
+    hang = ", ".join(f"{n} ×{c}" for n, c in w["systems"][:5]) or "—"
+    return {"title": f"📍 Where is {w['name']}?", "color": BLUE,
+            "description": (f"{last}\nHangouts: {hang}\n\n" + "\n".join(lines))[:4000], "footer": {"text": FRESH}}

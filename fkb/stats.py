@@ -1,7 +1,7 @@
 """Stats/search queries. Values are game credits."""
 import time
 
-PERIODS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "all": None}
+PERIODS = {"1h": 3600, "6h": 6 * 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "all": None}
 
 
 def since_ms(period, now_ms=None):
@@ -133,3 +133,77 @@ def server_stats(c, period="all", now_ms=None):
             "pilots": c.execute("SELECT COUNT(DISTINCT pilot_id) FROM attackers a JOIN kills k ON k.id=a.kill_id WHERE k.occurred_at>=?", (t,)).fetchone()[0],
             "corps": c.execute("SELECT COUNT(DISTINCT corp_id) FROM attackers a JOIN kills k ON k.id=a.kill_id WHERE k.occurred_at>=?", (t,)).fetchone()[0],
             "top_systems": [tuple(x) for x in top_sys], "top_lost_ships": [tuple(x) for x in top_ship]}
+
+
+def _corp_filter(c, corp):
+    if not corp:
+        return None
+    r = find_corp(c, corp)
+    return r["id"] if r else "__none__"
+
+
+def hunt(c, period="24h", corp=None, now_ms=None, limit=8, exclude_corp=None):
+    """Hot systems by kill count. corp: only kills where that corp attacked or died.
+    Returns dicts sorted by heat = kills weighted toward recent activity."""
+    now_ms = now_ms or int(time.time() * 1000)
+    t = since_ms(period, now_ms)
+    span = max(1, now_ms - t) if t else max(1, now_ms - (c.execute("SELECT MIN(occurred_at) FROM kills").fetchone()[0] or now_ms))
+    cid = _corp_filter(c, corp)
+    rows = c.execute("SELECT * FROM kills WHERE occurred_at>=?", (t,)).fetchall()
+    if cid:
+        rows = [k for k in rows if k["victim_corp_id"] == cid or c.execute(
+            "SELECT 1 FROM attackers WHERE kill_id=? AND corp_id=?", (k["id"], cid)).fetchone()]
+    by = {}
+    for k in rows:
+        by.setdefault(k["system_id"], []).append(k)
+    out = []
+    for sid, ks in by.items():
+        sy = c.execute("SELECT * FROM systems WHERE id=?", (sid,)).fetchone()
+        ids = [k["id"] for k in ks]
+        q = ",".join("?" * len(ids))
+        ships = c.execute(f"""SELECT coalesce(s.ship_class,k.victim_ship_id), COUNT(*) n FROM kills k LEFT JOIN ships s ON s.ship_id=k.victim_ship_id
+            WHERE k.id IN ({q}) GROUP BY 1 ORDER BY n DESC LIMIT 3""", ids).fetchall()
+        hunters = c.execute(f"""SELECT coalesce(co.ticker, '(no corp)'), COUNT(DISTINCT a.kill_id) n FROM attackers a LEFT JOIN corps co ON co.id=a.corp_id
+            WHERE a.kill_id IN ({q}) GROUP BY a.corp_id ORDER BY n DESC LIMIT 3""", ids).fetchall()
+        # heat: each kill weighs 1 + recency (1.0 for now, 0 at period start)
+        heat = sum(1 + max(0.0, 1 - (now_ms - k["occurred_at"]) / span) for k in ks)
+        out.append({"system_id": sid, "system": sy["name"] if sy else sid, "region": sy["region"] if sy else None,
+                    "security": sy["security"] if sy else None, "kills": len(ks),
+                    "last": max(k["occurred_at"] for k in ks), "avg_value": sum(k["total_value"] for k in ks) / len(ks),
+                    "victim_ships": [tuple(x) for x in ships], "hunters": [tuple(x) for x in hunters], "heat": round(heat, 3)})
+    out.sort(key=lambda r: (r["heat"], r["last"]), reverse=True)
+    return out[:limit]
+
+
+def targets(c, period="24h", home="DXD", now_ms=None, limit=8):
+    """Systems where anyone outside `home` (incl. no-corp pilots) lost ships, most recent first."""
+    t = since_ms(period, now_ms)
+    hid = _corp_filter(c, home)
+    rows = c.execute("""SELECT k.system_id, sy.name, sy.region, sy.security, COUNT(*) n, MAX(k.occurred_at) last,
+          AVG(k.total_value) avgv, group_concat(DISTINCT coalesce(co.ticker, vp.callsign)) who
+        FROM kills k LEFT JOIN systems sy ON sy.id=k.system_id LEFT JOIN corps co ON co.id=k.victim_corp_id
+        LEFT JOIN pilots vp ON vp.id=k.victim_pilot_id
+        WHERE k.occurred_at>=? AND coalesce(k.victim_corp_id,'')<>? GROUP BY k.system_id ORDER BY last DESC, n DESC LIMIT ?""",
+                     (t, hid or "", limit)).fetchall()
+    return [{"system": r["name"] or r["system_id"], "region": r["region"], "security": r["security"], "losses": r["n"],
+             "last": r["last"], "avg_value": r["avgv"], "who": (r["who"] or "").split(",")[:5]} for r in rows]
+
+
+def where(c, q, limit=10):
+    """Recent kill/loss locations for a pilot (preferred) or corp."""
+    p = find_pilot(c, q)
+    co = None if p else find_corp(c, q)
+    if not p and not co:
+        return None
+    col_a, col_v, eid = ("pilot_id", "victim_pilot_id", p["id"]) if p else ("corp_id", "victim_corp_id", co["id"])
+    rows = c.execute(f"""SELECT k.*, sy.name sysname, sy.region, sy.security,
+          CASE WHEN k.{col_v}=? THEN 'loss' ELSE 'kill' END role
+        FROM kills k LEFT JOIN systems sy ON sy.id=k.system_id
+        WHERE k.{col_v}=? OR EXISTS(SELECT 1 FROM attackers a WHERE a.kill_id=k.id AND a.{col_a}=?)
+        ORDER BY k.occurred_at DESC LIMIT ?""", (eid, eid, eid, limit)).fetchall()
+    systems = {}
+    for r in rows:
+        systems[r["sysname"]] = systems.get(r["sysname"], 0) + 1
+    return {"kind": "pilot" if p else "corp", "name": p["callsign"] if p else f"{co['name']} [{co['ticker']}]",
+            "events": [dict(r) for r in rows], "last_seen": rows[0]["occurred_at"] if rows else None,
+            "systems": sorted(systems.items(), key=lambda x: -x[1])}

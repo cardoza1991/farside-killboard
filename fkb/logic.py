@@ -1,4 +1,5 @@
 """Command handlers, Discord-free. Each returns (embed_dict, extra) for testing and the bot."""
+import time
 from . import stats as S, render as R, feed
 from .db import get_raw
 
@@ -58,3 +59,42 @@ def kill(c, kid):
 def server(c, period="all", now_ms=None):
     s = S.server_stats(c, period, now_ms)
     return R.server_embed(s, period), s
+
+
+def hunt(c, period="24h", corp=None, now_ms=None):
+    rows = S.hunt(c, period, corp, now_ms)
+    return R.hunt_embed(rows, period, corp, now_ms), rows
+
+
+def targets(c, period="24h", home="DXD", now_ms=None):
+    rows = S.targets(c, period, home, now_ms)
+    return R.targets_embed(rows, period, home, now_ms), rows
+
+
+def where(c, q, now_ms=None):
+    w = S.where(c, q)
+    if not w:
+        raise NotFound(f"No pilot or corp matching '{q}'.")
+    return R.where_embed(w, now_ms), w
+
+
+def card_for(c, kid, filters=None, cache_dir=None, fetch=None):
+    """(png_bytes, short_embed, km) for /kill."""
+    from . import card
+    _, km = kill(c, kid)
+    kind = feed.classify(km, filters or set()) or "neutral"
+    return card.render_card(km, kind, cache_dir, **({} if fetch is None else {"fetch": fetch})), short_embed(km, kind), km
+
+
+def short_embed(km, kind="neutral"):
+    loc = km.get("location") or {}
+    v = km.get("victim") or {}
+    tag = {"kill": "KILL", "loss": "LOSS"}.get(kind, "Kill")
+    e = {"title": f"{tag}: {feed._pilot(v.get('pilot'))} lost a {(v.get('ship') or {}).get('shipClass') or 'ship'}",
+         "url": f"{feed.BASE}/kills/{km['id']}", "color": {"kill": feed.GREEN, "loss": feed.RED}.get(kind, feed.GREY),
+         "description": f"📍 **{loc.get('systemName') or 'Unknown'}**" + "".join(f" · {x}" for x in (loc.get("poiName"), loc.get("regionName")) if x)
+                        + (f" · `{loc['securityBand']}`" if loc.get("securityBand") else ""),
+         "image": {"url": "attachment://kill.png"}}
+    if km.get("occurredAt"):
+        e["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(km["occurredAt"] / 1000))
+    return e

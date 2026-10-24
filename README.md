@@ -28,7 +28,21 @@ Service: copy `farside-killboard.service` to `~/.config/systemd/user/`, run `sys
 
 Definitions: a **kill** counts when any corp or pilot member is on the attacker list (friendly fire is excluded). **Destroyed** is the sum of those kills' total value, and **lost** is the sum of losses. **Efficiency** = destroyed / (destroyed + lost). **K/D** = kills / losses. **Solo** means attackerCount == 1.
 
+## Kill cards & hunting
+Each feed post and `/kill` comes with a PNG kill card (Pillow): the final-blow pilot and ship on the left, the victim on the right, party size, value and time in the middle, and a large **LOCATION** block (system, POI, region) with a security badge (🟢 core · 🟠 marches · 🔴 deep), plus damage bars. Ship images are cached in `data/ships/`. If an image fails to load, the card shows a placeholder; if the whole card fails, the post falls back to a text embed.
+
+* `/hunt [1h|6h|24h|7d] [corp] [view: hot systems|targets]`: **hot** lists systems by heat (each kill counts 1, plus up to 1 more the more recent it is), with last kill time, typical victim ships, average value and who's hunting there. **targets** lists systems where non-DXD pilots died, most recent first.
+* `/where <pilot|corp>`: recent kill and loss locations, last seen, and favourite systems.
+Data is only as fresh as the playfarside.com API, which is polled every 45 s.
+
 ## CLI (dry-run / no Discord)
+```
+python3 killboard.py hunt --period 24h [--corp SYN]
+python3 killboard.py targets --period 24h
+python3 killboard.py where "Space Monkey"
+python3 killboard.py card 8629ac91 -o kill.png
+```
+
 ```
 python3 killboard.py stats DXD --period 7d
 python3 killboard.py pilot "Space Monkey"

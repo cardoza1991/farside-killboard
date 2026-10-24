@@ -1,9 +1,9 @@
 """Discord gateway bot (outbound only). Requires discord.py 2.x."""
-import asyncio, datetime as dt, logging, os, time
+import asyncio, datetime as dt, io, logging, os, time
 import discord
 from discord import app_commands
 from discord.ext import tasks
-from . import db, feed, logic, service, stats as S
+from . import card, db, feed, logic, service, stats as S
 
 log = logging.getLogger("farside")
 PERIOD = [app_commands.Choice(name=p, value=p) for p in ("24h", "7d", "30d", "all")]
@@ -84,7 +84,10 @@ class KillBot(discord.Client):
         log.info("logged in as %s", self.user)
         log.info("in guilds: %s", ", ".join(f"{g.name} ({g.id})" for g in self.guilds) or "NONE")
 
-    async def send(self, embed):
+    def card_cache(self):
+        return os.path.join(os.path.dirname(os.path.abspath(self.dbpath)), "ships")
+
+    async def send(self, embed, png=None):
         ch = self.get_channel(self.channel_id) if self.channel_id else None
         if ch is None and self.channel_id:
             try:
@@ -92,9 +95,13 @@ class KillBot(discord.Client):
             except discord.HTTPException:
                 ch = None
         if ch is not None:
-            await ch.send(embed=discord.Embed.from_dict(embed))
+            if png:
+                await ch.send(embed=discord.Embed.from_dict(embed), file=discord.File(io.BytesIO(png), filename="kill.png"))
+            else:
+                await ch.send(embed=discord.Embed.from_dict(embed))
             return True
         if self.webhook:
+            embed = {k: v for k, v in embed.items() if k != "image"}
             return await asyncio.to_thread(feed.post_webhook, self.webhook, embed)
         return False
 
@@ -107,7 +114,13 @@ class KillBot(discord.Client):
             log.warning("poll failed: %s", type(e).__name__)
             return
         for km, kind in items:
-            if await self.send(feed.build_embed(km, kind)):
+            try:
+                png = await asyncio.to_thread(card.render_card, km, kind, self.card_cache())
+                emb = logic.short_embed(km, kind)
+            except Exception as e:
+                log.warning("card render failed for %s: %s", km.get("id"), type(e).__name__)
+                png, emb = None, feed.build_embed(km, kind)
+            if await self.send(emb, png):
                 await self.q(service.mark_posted, km["id"])
             await asyncio.sleep(1)
 
@@ -151,9 +164,40 @@ def _register(bot):
     async def search(inter: discord.Interaction, text: str):
         await reply(inter, logic.search, text, 0, view=lambda total: SearchView(bot, text, total))
 
-    @tree.command(description="Show one kill by ID (prefix ok)")
+    @tree.command(description="Show one kill by ID (prefix ok) as a kill card")
     async def kill(inter: discord.Interaction, id: str):
-        await reply(inter, logic.kill, id)
+        await inter.response.defer(thinking=True)
+        try:
+            png, e, _ = await bot.q(logic.card_for, id, bot.filters, bot.card_cache())
+        except logic.NotFound as ex:
+            await inter.followup.send(str(ex), ephemeral=True)
+            return
+        except Exception as ex:
+            log.warning("card render failed: %s", type(ex).__name__)
+            await reply_followup(inter, logic.kill, id)
+            return
+        await inter.followup.send(embed=discord.Embed.from_dict(e), file=discord.File(io.BytesIO(png), filename="kill.png"))
+
+    async def reply_followup(inter, fn, *a):
+        e, _ = await bot.q(fn, *a)
+        await inter.followup.send(embed=discord.Embed.from_dict(e))
+
+    HUNT_P = [app_commands.Choice(name=p, value=p) for p in ("1h", "6h", "24h", "7d")]
+
+    @tree.command(description="Where to hunt: hot systems, or targets (where non-DXD pilots died)")
+    @app_commands.autocomplete(corp=corp_ac)
+    @app_commands.choices(period=HUNT_P, view=[app_commands.Choice(name="hot systems", value="hot"),
+                                               app_commands.Choice(name="targets", value="targets")])
+    async def hunt(inter: discord.Interaction, period: str = "24h", corp: str = None, view: str = "hot"):
+        if view == "targets":
+            await reply(inter, logic.targets, period, bot.group)
+        else:
+            await reply(inter, logic.hunt, period, corp)
+
+    @tree.command(description="Where a pilot or corp has been killing and dying")
+    @app_commands.autocomplete(name=pilot_ac)
+    async def where(inter: discord.Interaction, name: str):
+        await reply(inter, logic.where, name)
 
     @tree.command(description="Corp stats")
     @app_commands.autocomplete(name=corp_ac)

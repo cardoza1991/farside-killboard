@@ -6,7 +6,7 @@
   killboard.py backfill                 # one-time history fetch into data/kills.db
   killboard.py poll [--dry-run]         # one ingest cycle, print/post feed embeds
   killboard.py stats DXD --period 7d    # corp stats (text)
-  killboard.py pilot NAME | leaderboard [corps|pilots] | compare A B | search TEXT | kill ID | server
+  killboard.py pilot NAME | hunt | targets | where NAME | card ID -o x.png | leaderboard [corps|pilots] | compare A B | search TEXT | kill ID | server
 """
 import argparse, json, os, random, sys, time
 
@@ -44,6 +44,15 @@ def main(argv=None):
     p.add_argument("text")
     p.add_argument("--page", type=int, default=0)
     sub.add_parser("kill").add_argument("id")
+    p = sub.add_parser("hunt")
+    p.add_argument("--period", default="24h", choices=list(S.PERIODS))
+    p.add_argument("--corp")
+    p = sub.add_parser("targets")
+    p.add_argument("--period", default="24h", choices=list(S.PERIODS))
+    sub.add_parser("where").add_argument("name")
+    p = sub.add_parser("card")
+    p.add_argument("id")
+    p.add_argument("-o", "--out", default="kill.png")
     p = sub.add_parser("server")
     p.add_argument("--period", default="all", choices=list(S.PERIODS))
     a = ap.parse_args(argv)
@@ -93,8 +102,16 @@ def main(argv=None):
             print(R.entity_lines(r["callsign"], S.entity_stats(c, "pilot", r["id"], a.period), a.period))
         elif a.cmd == "leaderboard":
             print(R.leaderboard_lines(S.leaderboard(c, a.kind, a.period, a.sort, a.limit), a.kind, a.period, a.sort))
+        elif a.cmd == "card":
+            try:
+                png, _, km = logic.card_for(c, a.id, service.filters_from_env(), os.path.join(os.path.dirname(a.db), "ships"))
+            except logic.NotFound as ex:
+                sys.exit(str(ex))
+            open(a.out, "wb").write(png)
+            print(f"wrote {a.out} for kill {km['id']}")
         else:
-            fn = {"compare": lambda: logic.compare(c, a.a, a.b, a.period), "search": lambda: logic.search(c, a.text, a.page),
+            fn = {"hunt": lambda: logic.hunt(c, a.period, a.corp), "targets": lambda: logic.targets(c, a.period, os.environ.get("HOME_CORP", "DXD")),
+                  "where": lambda: logic.where(c, a.name),"compare": lambda: logic.compare(c, a.a, a.b, a.period), "search": lambda: logic.search(c, a.text, a.page),
                   "kill": lambda: logic.kill(c, a.id), "server": lambda: logic.server(c, a.period)}[a.cmd]
             try:
                 print(json.dumps(fn()[0], indent=2))

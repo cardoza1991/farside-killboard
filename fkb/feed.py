@@ -96,7 +96,10 @@ def build_embed(km, kind="neutral"):
     e = {
         "title": f"{tag}: {victim} lost a {(v.get('ship') or {}).get('shipClass') or 'ship'}",
         "url": f"{BASE}/kills/{km['id']}",
-        "description": f"**{killer}** destroyed **{victim}**",
+        "description": f"📍 **{loc.get('systemName') or 'Unknown'}**"
+                       + "".join(f" · {x}" for x in (loc.get("poiName"), loc.get("regionName")) if x)
+                       + (f" · `{loc['securityBand']}`" if loc.get("securityBand") else "")
+                       + f"\n**{killer}** destroyed **{victim}**",
         "color": color,
         "fields": [
             {"name": "Victim ship", "value": _ship(v.get("ship")), "inline": True},
