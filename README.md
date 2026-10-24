@@ -17,7 +17,7 @@ Stores **every** Farside kill in SQLite (`data/kills.db`), auto-posts DXD kills 
 
 ## 3. Run
 ```
-PY=/home/abc/Desktop/the-elon-experience/.venv/bin/python   # has discord.py 2.7.1
+PY=/path/to/venv/bin/python   # has discord.py 2.7.1
 $PY killboard.py backfill          # optional; the bot also does it on first start
 $PY killboard.py run
 ```

@@ -3,8 +3,8 @@ Description=Farside killboard Discord bot
 After=network-online.target
 
 [Service]
-WorkingDirectory=/home/abc/Desktop/farside-killboard
-ExecStart=/home/abc/Desktop/the-elon-experience/.venv/bin/python /home/abc/Desktop/farside-killboard/killboard.py run
+WorkingDirectory=/path/to/farside-killboard
+ExecStart=/path/to/venv/bin/python /path/to/farside-killboard/killboard.py run
 Restart=on-failure
 RestartSec=30
 
